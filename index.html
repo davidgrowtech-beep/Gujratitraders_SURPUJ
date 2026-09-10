@@ -39,7 +39,6 @@ body{
   min-height:100vh;
 }
 
-/* Ambient background glow */
 .bg-glow{
   position:fixed;
   inset:0;
@@ -50,7 +49,6 @@ body{
   z-index:-1;
 }
 
-/* Top Announcement Bar */
 .top-bar{
   background:#1e293b;
   text-align:center;
@@ -64,10 +62,8 @@ body{
 }
 .top-bar span{ color:#00e676; font-weight:700; }
 
-/* Main Container */
 .container{ max-width:440px; margin:0 auto; padding:20px; }
 
-/* Profile Section */
 .profile-card{
   text-align:center;
   background:linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
@@ -89,12 +85,10 @@ body{
 }
 .img-box img{ width:100%; height:100%; object-fit:cover; display:block; }
 
-/* Typography */
 h1{ font-size:24px; font-weight:800; color:#ffffff; letter-spacing:0.5px; }
 .sub{ color:#fb8500; font-size:14px; font-weight:600; margin-top:4px; }
 .desc{ color:#94a3b8; font-size:13.5px; margin-top:10px; line-height:1.6; }
 
-/* Stats Grid */
 .stats{ display:flex; gap:10px; margin:22px 0; }
 .box{
   flex:1;
@@ -108,7 +102,6 @@ h1{ font-size:24px; font-weight:800; color:#ffffff; letter-spacing:0.5px; }
 .box h2{ color:#ffb703; font-size:20px; font-weight:800; }
 .box p{ font-size:11px; color:#cbd5e1; margin-top:3px; }
 
-/* Main Call to Action Button */
 .btn{
   display:flex;
   align-items:center;
@@ -146,7 +139,6 @@ h1{ font-size:24px; font-weight:800; color:#ffffff; letter-spacing:0.5px; }
 }
 .fallback-link.show{ display:block; }
 
-/* Features / Benefits */
 .points{ margin-top:18px; }
 .point{
   background:#1e293b;
@@ -163,7 +155,6 @@ h1{ font-size:24px; font-weight:800; color:#ffffff; letter-spacing:0.5px; }
 }
 .icon{ font-size:19px; flex-shrink:0; }
 
-/* Footer / Legal Tabs */
 .legal{
   margin-top:28px;
   font-size:11px;
@@ -272,9 +263,9 @@ h1{ font-size:24px; font-weight:800; color:#ffffff; letter-spacing:0.5px; }
     pixelId: "1606921690809448",
     telegramLink: "https://t.me/+j6sio7Ww_lxkNDI1",
     eventName: "Lead",
-    minDwellTime: 3000,
-    requireInteraction: true,
-    redirectDelay: 350,
+    minDwellTime: 3000,      // still used to score the click, no longer blocks redirect
+    requireInteraction: true, // still used to score the click, no longer blocks redirect
+    redirectDelay: 120,      // just enough to let fbq's beacon fire before navigation
     webhookUrl: null,
     debug: false
   };
@@ -282,10 +273,16 @@ h1{ font-size:24px; font-weight:800; color:#ffffff; letter-spacing:0.5px; }
 
 <script>
 /**
- * UNIVERSAL TELEGRAM TRACKING SCRIPT (v2)
+ * UNIVERSAL TELEGRAM TRACKING SCRIPT (v3)
  * ----------------------------------------
- * Filters fake/bot clicks before they count as conversions,
- * and ensures genuine visitors reliably reach Telegram.
+ * FIX vs v2: the redirect to Telegram is now UNCONDITIONAL.
+ * Bot/dwell/interaction checks only decide whether the click is
+ * treated as a "confirmed" conversion (fbq fires) or a "filtered"
+ * one (reported, no pixel event) — they never block navigation.
+ * v2 called preventDefault() and then returned early on failed
+ * checks, which silently killed the button for any real visitor
+ * who tapped before 3s of dwell time or before triggering an
+ * interaction event — that's why it looked "not working".
  */
 (function () {
   "use strict";
@@ -297,7 +294,7 @@ h1{ font-size:24px; font-weight:800; color:#ffffff; letter-spacing:0.5px; }
       eventName: "Lead",
       minDwellTime: 3000,
       requireInteraction: true,
-      redirectDelay: 350,
+      redirectDelay: 120,
       webhookUrl: null,
       debug: false,
     },
@@ -306,7 +303,7 @@ h1{ font-size:24px; font-weight:800; color:#ffffff; letter-spacing:0.5px; }
 
   var pageLoadTime = Date.now();
   var humanInteracted = false;
-  var hasFired = false;
+  var hasFiredPixel = false;
   var sessionKey = "tg_fired_" + (CFG.pixelId || "default");
   var interactionEvents = ["mousemove", "touchstart", "scroll", "keydown", "pointerdown"];
 
@@ -334,23 +331,23 @@ h1{ font-size:24px; font-weight:800; color:#ffffff; letter-spacing:0.5px; }
     return false;
   }
 
-  function alreadyFiredThisSession() {
+  function alreadyFiredPixelThisSession() {
     try {
       return sessionStorage.getItem(sessionKey) === "1";
     } catch (e) {
-      return hasFired;
+      return hasFiredPixel;
     }
   }
 
-  function markFired() {
-    hasFired = true;
+  function markPixelFired() {
+    hasFiredPixel = true;
     try {
       sessionStorage.setItem(sessionKey, "1");
     } catch (e) {}
   }
 
   function reportFiltered(reason) {
-    log("BLOCKED — reason:", reason);
+    log("pixel NOT fired — reason:", reason);
     if (CFG.webhookUrl) {
       try {
         fetch(CFG.webhookUrl, {
@@ -370,27 +367,48 @@ h1{ font-size:24px; font-weight:800; color:#ffffff; letter-spacing:0.5px; }
     }
   }
 
+  function showFallback() {
+    var fb = document.getElementById("fallbackLink");
+    if (fb) fb.classList.add("show");
+  }
+
+  function goToTelegram() {
+    window.location.href = CFG.telegramLink;
+    // Belt-and-braces: if something (in-app browser quirk, popup
+    // blocker) stops the redirect, reveal the manual fallback link
+    // instead of leaving the user stuck on a page that "did nothing".
+    setTimeout(showFallback, 1500);
+  }
+
   function attemptJoin(evt) {
     if (evt && evt.preventDefault) evt.preventDefault();
 
-    if (alreadyFiredThisSession()) {
-      log("duplicate click ignored (already fired this session)");
-      window.location.href = CFG.telegramLink;
+    // Redirect ALWAYS happens — this is the actual product.
+    // Everything below only decides whether we also fire the pixel.
+    if (alreadyFiredPixelThisSession()) {
+      log("pixel already fired this session — redirecting without re-firing");
+      goToTelegram();
       return;
     }
 
     var dwell = Date.now() - pageLoadTime;
+    var bot = isLikelyBot();
+    var qualifies =
+      !bot &&
+      (!CFG.requireInteraction || humanInteracted) &&
+      dwell >= CFG.minDwellTime;
 
-    if (isLikelyBot()) {
-      reportFiltered("bot_signature");
-      return;
-    }
-    if (CFG.requireInteraction && !humanInteracted) {
-      reportFiltered("no_human_interaction");
-      return;
-    }
-    if (dwell < CFG.minDwellTime) {
-      reportFiltered("dwell_too_short:" + dwell + "ms");
+    if (!qualifies) {
+      reportFiltered(
+        bot
+          ? "bot_signature"
+          : CFG.requireInteraction && !humanInteracted
+          ? "no_human_interaction"
+          : "dwell_too_short:" + dwell + "ms"
+      );
+      // Fire the pixel anyway but note it, OR skip it — choose skip
+      // here since this is meant to filter junk from ad reporting.
+      goToTelegram();
       return;
     }
 
@@ -404,11 +422,9 @@ h1{ font-size:24px; font-weight:800; color:#ffffff; letter-spacing:0.5px; }
       log("fbq not found — pixel base code missing?");
     }
 
-    markFired();
+    markPixelFired();
 
-    setTimeout(function () {
-      window.location.href = CFG.telegramLink;
-    }, CFG.redirectDelay);
+    setTimeout(goToTelegram, CFG.redirectDelay);
   }
 
   function wireButtons() {
